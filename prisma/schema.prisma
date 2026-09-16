@@ -7,14 +7,45 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum TipoEntrega {
+  DELIVERY
+  PRESENCIAL
+  AMBOS
+}
+
+enum EstadoProducto {
+  DISPONIBLE
+  VENDIDO
+}
+
 model User {
-  id            String   @id @default(uuid())
+  id            String     @id @default(uuid())
   nombre        String
-  email         String   @unique
+  email         String     @unique
   password_hash String
   foto_perfil   String?
-  tipo_usuario  String   @default("cliente")
-  created_at    DateTime @default(now())
+  tipo_usuario  String     @default("cliente")
+  created_at    DateTime   @default(now())
+
+  // Relación: Un usuario puede tener muchos productos publicados
+  products      Product[]
 
   @@map("users")
+}
+
+model Product {
+  id           String         @id @default(uuid())
+  user_id      String
+  titulo       String
+  descripcion  String
+  precio       Float
+  imagenes     String[]
+  tipo_entrega TipoEntrega    @default(AMBOS)
+  estado       EstadoProducto @default(DISPONIBLE)
+  created_at   DateTime       @default(now())
+
+  // Clave foránea referenciando a la tabla users
+  user         User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("products")
 }
