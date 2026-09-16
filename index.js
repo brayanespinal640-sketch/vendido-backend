@@ -2,12 +2,24 @@ const express = require('express');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const cloudinary = require('cloudinary').v2;
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
+
+// Configuración de Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
+
+// Configuración de Multer para recibir archivos en memoria
+const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
 app.use(express.json());
@@ -89,6 +101,32 @@ app.post('/api/auth/login', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// 3. UPLOAD A CLOUDINARY
+app.post('/api/upload', upload.single('imagen'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No se ha adjuntado ninguna imagen' });
+    }
+
+    // Convertir el buffer del archivo enviado a Base64 para subida directa
+    const fileBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+
+    // Subir a la carpeta 'vendido_products' en Cloudinary
+    const result = await cloudinary.uploader.upload(fileBase64, {
+      folder: 'vendido_products',
+    });
+
+    res.json({
+      message: 'Imagen subida exitosamente',
+      url: result.secure_url,
+      public_id: result.public_id,
+    });
+  } catch (error) {
+    console.error('Error al subir imagen:', error);
+    res.status(500).json({ error: 'Error al procesar y subir la imagen' });
   }
 });
 
