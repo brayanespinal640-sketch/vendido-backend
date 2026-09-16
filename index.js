@@ -7,6 +7,9 @@ const cloudinary = require('cloudinary').v2;
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
+// Importar Middleware de Autenticación
+const authenticateToken = require('./middleware/auth');
+
 const app = express();
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
@@ -24,12 +27,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 app.use(cors());
 app.use(express.json());
 
-// Ruta de verificación
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', message: 'Servidor conectado' });
-});
+// --- RUTA DE SALUD ---
+app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'Servidor conectado' }));
 
-// 1. REGISTRO DE USUARIO
+// --- 1. REGISTRO DE USUARIO ---
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { nombre, email, password, tipo_usuario } = req.body;
@@ -66,7 +67,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// 2. LOGIN DE USUARIO
+// --- 2. LOGIN DE USUARIO ---
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -104,29 +105,92 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// 3. UPLOAD A CLOUDINARY
+// --- 3. UPLOAD DE IMÁGENES ---
 app.post('/api/upload', upload.single('imagen'), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No se ha adjuntado ninguna imagen' });
+    if (!req.file) return res.status(400).json({ error: 'No se ha adjuntado ninguna imagen' });
+    const fileBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
+    const result = await cloudinary.uploader.upload(fileBase64, { folder: 'vendido_products' });
+    res.json({ message: 'Imagen subida exitosamente', url: result.secure_url });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al procesar la imagen' });
+  }
+});
+
+// --- 4. ENDPOINTS DE PRODUCTOS ---
+
+// Crear Producto (Requiere autenticación)
+app.post('/api/products', authenticateToken, async (req, res) => {
+  try {
+    const { titulo, descripcion, precio, imagenes, tipo_entrega } = req.body;
+
+    if (!titulo || !descripcion || !precio) {
+      return res.status(400).json({ error: 'Título, descripción y precio son requeridos' });
     }
 
-    // Convertir el buffer del archivo enviado a Base64 para subida directa
-    const fileBase64 = `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}`;
-
-    // Subir a la carpeta 'vendido_products' en Cloudinary
-    const result = await cloudinary.uploader.upload(fileBase64, {
-      folder: 'vendido_products',
+    const newProduct = await prisma.product.create({
+      data: {
+        user_id: req.user.id, // ID extraído del token JWT
+        titulo,
+        descripcion,
+        precio: parseFloat(precio),
+        imagenes: imagenes || [],
+        tipo_entrega: tipo_entrega || 'AMBOS',
+      },
     });
 
-    res.json({
-      message: 'Imagen subida exitosamente',
-      url: result.secure_url,
-      public_id: result.public_id,
+    res.status(201).json({
+      message: 'Producto publicado exitosamente',
+      product: newProduct,
     });
   } catch (error) {
-    console.error('Error al subir imagen:', error);
-    res.status(500).json({ error: 'Error al procesar y subir la imagen' });
+    console.error('Error al crear producto:', error);
+    res.status(500).json({ error: 'Error al publicar el producto' });
+  }
+});
+
+// Listar todos los productos disponibles (Feed público)
+app.get('/api/products', async (req, res) => {
+  try {
+    const products = await prisma.product.findMany({
+      where: { estado: 'DISPONIBLE' },
+      orderBy: { created_at: 'desc' },
+      include: {
+        user: {
+          select: { id: true, nombre: true, email: true, foto_perfil: true },
+        },
+      },
+    });
+
+    res.json(products);
+  } catch (error) {
+    console.error('Error al obtener productos:', error);
+    res.status(500).json({ error: 'Error al obtener el catálogo de productos' });
+  }
+});
+
+// Obtener detalle de un producto específico
+app.get('/api/products/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const product = await prisma.product.findUnique({
+      where: { id },
+      include: {
+        user: {
+          select: { id: true, nombre: true, email: true, foto_perfil: true },
+        },
+      },
+    });
+
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    res.json(product);
+  } catch (error) {
+    console.error('Error al consultar producto:', error);
+    res.status(500).json({ error: 'Error interno al buscar el producto' });
   }
 });
 
