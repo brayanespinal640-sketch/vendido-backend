@@ -1,5 +1,7 @@
 const express = require('express');
 const cors = require('cors');
+const http = require('http');
+const { Server } = require('socket.io');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
@@ -11,6 +13,16 @@ require('dotenv').config();
 const authenticateToken = require('./middleware/auth');
 
 const app = express();
+const server = http.createServer(app);
+
+// Configuración de Socket.IO con CORS
+const io = new Server(server, {
+  cors: {
+    origin: 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+  },
+});
+
 const prisma = new PrismaClient();
 const PORT = process.env.PORT || 4000;
 
@@ -21,7 +33,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Configuración de Multer para recibir archivos en memoria
+// Configuración de Multer para archivos en memoria
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
@@ -39,16 +51,13 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: 'Nombre, email y contraseña son obligatorios' });
     }
 
-    // Verificar si el usuario ya existe
     const userExists = await prisma.user.findUnique({ where: { email } });
     if (userExists) {
       return res.status(400).json({ error: 'El email ya está registrado' });
     }
 
-    // Encriptar la contraseña
     const password_hash = await bcrypt.hash(password, 10);
 
-    // Guardar en Supabase mediante Prisma
     const newUser = await prisma.user.create({
       data: {
         nombre,
@@ -76,19 +85,16 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: 'Email y contraseña requeridos' });
     }
 
-    // Buscar usuario por email
     const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(400).json({ error: 'Credenciales inválidas' });
     }
 
-    // Comparar contraseña encriptada
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
       return res.status(400).json({ error: 'Credenciales inválidas' });
     }
 
-    // Generar Token JWT
     const token = jwt.sign(
       { id: user.id, email: user.email, tipo_usuario: user.tipo_usuario },
       process.env.JWT_SECRET,
@@ -105,7 +111,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// --- 3. UPLOAD DE IMÁGENES ---
+// --- 3. UPLOAD DE IMÁGENES A CLOUDINARY ---
 app.post('/api/upload', upload.single('imagen'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se ha adjuntado ninguna imagen' });
@@ -119,7 +125,7 @@ app.post('/api/upload', upload.single('imagen'), async (req, res) => {
 
 // --- 4. ENDPOINTS DE PRODUCTOS ---
 
-// Crear Producto (Requiere autenticación)
+// Crear Producto
 app.post('/api/products', authenticateToken, async (req, res) => {
   try {
     const { titulo, descripcion, precio, imagenes, tipo_entrega } = req.body;
@@ -130,7 +136,7 @@ app.post('/api/products', authenticateToken, async (req, res) => {
 
     const newProduct = await prisma.product.create({
       data: {
-        user_id: req.user.id, // ID extraído del token JWT
+        user_id: req.user.id,
         titulo,
         descripcion,
         precio: parseFloat(precio),
@@ -139,61 +145,129 @@ app.post('/api/products', authenticateToken, async (req, res) => {
       },
     });
 
-    res.status(201).json({
-      message: 'Producto publicado exitosamente',
-      product: newProduct,
-    });
+    res.status(201).json({ message: 'Producto publicado exitosamente', product: newProduct });
   } catch (error) {
-    console.error('Error al crear producto:', error);
     res.status(500).json({ error: 'Error al publicar el producto' });
   }
 });
 
-// Listar todos los productos disponibles (Feed público)
+// Obtener catálogo público de productos
 app.get('/api/products', async (req, res) => {
   try {
     const products = await prisma.product.findMany({
       where: { estado: 'DISPONIBLE' },
       orderBy: { created_at: 'desc' },
-      include: {
-        user: {
-          select: { id: true, nombre: true, email: true, foto_perfil: true },
-        },
-      },
+      include: { user: { select: { id: true, nombre: true, email: true, foto_perfil: true } } },
     });
-
     res.json(products);
   } catch (error) {
-    console.error('Error al obtener productos:', error);
-    res.status(500).json({ error: 'Error al obtener el catálogo de productos' });
+    res.status(500).json({ error: 'Error al obtener productos' });
   }
 });
 
-// Obtener detalle de un producto específico
+// Obtener detalle de un producto
 app.get('/api/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
-
     const product = await prisma.product.findUnique({
       where: { id },
-      include: {
-        user: {
-          select: { id: true, nombre: true, email: true, foto_perfil: true },
+      include: { user: { select: { id: true, nombre: true, email: true, foto_perfil: true } } },
+    });
+    if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+    res.json(product);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al buscar el producto' });
+  }
+});
+
+// --- 5. ENDPOINTS DE CONVERSACIONES Y MENSAJES ---
+
+// Obtener o crear conversación entre comprador y vendedor
+app.post('/api/conversations', authenticateToken, async (req, res) => {
+  try {
+    const { producto_id, vendedor_id } = req.body;
+    const comprador_id = req.user.id;
+
+    if (comprador_id === vendedor_id) {
+      return res.status(400).json({ error: 'No puedes iniciar un chat con tu propio producto' });
+    }
+
+    let conversation = await prisma.conversation.findUnique({
+      where: {
+        comprador_id_vendedor_id_producto_id: {
+          comprador_id,
+          vendedor_id,
+          producto_id,
         },
       },
     });
 
-    if (!product) {
-      return res.status(404).json({ error: 'Producto no encontrado' });
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: { comprador_id, vendedor_id, producto_id },
+      });
     }
 
-    res.json(product);
+    res.json(conversation);
   } catch (error) {
-    console.error('Error al consultar producto:', error);
-    res.status(500).json({ error: 'Error interno al buscar el producto' });
+    console.error('Error al gestionar conversación:', error);
+    res.status(500).json({ error: 'Error al obtener la conversación' });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Servidor escuchando en http://localhost:${PORT}`);
+// Obtener historial de mensajes
+app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const messages = await prisma.message.findMany({
+      where: { conversation_id: id },
+      orderBy: { created_at: 'asc' },
+      include: { emisor: { select: { id: true, nombre: true } } },
+    });
+    res.json(messages);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener los mensajes' });
+  }
+});
+
+// --- 6. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
+io.on('connection', (socket) => {
+  console.log('Cliente conectado a Socket.IO:', socket.id);
+
+  // Unirse a una sala específica de chat (conversation_id)
+  socket.on('join_room', (conversation_id) => {
+    socket.join(conversation_id);
+    console.log(`Socket ${socket.id} se unió a la sala: ${conversation_id}`);
+  });
+
+  // Escuchar y transmitir envío de mensaje
+  socket.on('send_message', async (data) => {
+    const { conversation_id, emisor_id, contenido } = data;
+
+    try {
+      // Guardar el mensaje en la base de datos con Prisma
+      const savedMessage = await prisma.message.create({
+        data: {
+          conversation_id,
+          emisor_id,
+          contenido,
+        },
+        include: { emisor: { select: { id: true, nombre: true } } },
+      });
+
+      // Emitir a todos los sockets conectados en esa sala de chat
+      io.to(conversation_id).emit('receive_message', savedMessage);
+    } catch (error) {
+      console.error('Error guardando o emitiendo mensaje:', error);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Cliente desconectado de Socket.IO:', socket.id);
+  });
+});
+
+// Arrancar el servidor usando `server.listen` en lugar de `app.listen`
+server.listen(PORT, () => {
+  console.log(`Servidor HTTP y WebSockets corriendo en http://localhost:${PORT}`);
 });

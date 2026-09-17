@@ -19,16 +19,18 @@ enum EstadoProducto {
 }
 
 model User {
-  id            String     @id @default(uuid())
+  id            String   @id @default(uuid())
   nombre        String
-  email         String     @unique
+  email         String   @unique
   password_hash String
   foto_perfil   String?
-  tipo_usuario  String     @default("cliente")
-  created_at    DateTime   @default(now())
+  tipo_usuario  String   @default("cliente")
+  created_at    DateTime @default(now())
 
-  // Relación: Un usuario puede tener muchos productos publicados
-  products      Product[]
+  products                 Product[]
+  conversationsAsComprador Conversation[] @relation("CompradorConversations")
+  conversationsAsVendedor  Conversation[] @relation("VendedorConversations")
+  messages                 Message[]      @relation("EmisorMessages")
 
   @@map("users")
 }
@@ -44,8 +46,37 @@ model Product {
   estado       EstadoProducto @default(DISPONIBLE)
   created_at   DateTime       @default(now())
 
-  // Clave foránea referenciando a la tabla users
-  user         User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  user          User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  conversations Conversation[]
 
   @@map("products")
+}
+
+model Conversation {
+  id           String   @id @default(uuid())
+  comprador_id String
+  vendedor_id  String
+  producto_id  String
+  created_at   DateTime @default(now())
+
+  comprador User      @relation("CompradorConversations", fields: [comprador_id], references: [id], onDelete: Cascade)
+  vendedor  User      @relation("VendedorConversations", fields: [vendedor_id], references: [id], onDelete: Cascade)
+  producto  Product   @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@unique([comprador_id, vendedor_id, producto_id])
+  @@map("conversations")
+}
+
+model Message {
+  id              String   @id @default(uuid())
+  conversation_id String
+  emisor_id       String
+  contenido       String
+  created_at      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  emisor       User         @relation("EmisorMessages", fields: [emisor_id], references: [id], onDelete: Cascade)
+
+  @@map("messages")
 }
