@@ -12,6 +12,9 @@ require('dotenv').config();
 // Importar Middleware de Autenticación
 const authenticateToken = require('./middleware/auth');
 
+// Importar Esquemas de Validación con Zod
+const { registerSchema } = require('./schemas/auth.schema');
+
 const app = express();
 const server = http.createServer(app);
 
@@ -42,22 +45,30 @@ app.use(express.json());
 // --- RUTA DE SALUD ---
 app.get('/api/health', (req, res) => res.json({ status: 'ok', message: 'Servidor conectado' }));
 
-// --- 1. REGISTRO DE USUARIO ---
+// --- 1. REGISTRO DE USUARIO CON VALIDACIÓN DE ZOD ---
 app.post('/api/auth/register', async (req, res) => {
   try {
-    const { nombre, email, password, tipo_usuario } = req.body;
+    // Validar el cuerpo de la petición con Zod
+    const validationResult = registerSchema.safeParse(req.body);
 
-    if (!nombre || !email || !password) {
-      return res.status(400).json({ error: 'Nombre, email y contraseña son obligatorios' });
+    if (!validationResult.success) {
+      // Mapear los errores y devolverlos al frontend
+      const errors = validationResult.error.errors.map((err) => err.message);
+      return res.status(400).json({ errors });
     }
 
+    const { nombre, email, password, tipo_usuario } = validationResult.data;
+
+    // Verificar si el usuario ya existe
     const userExists = await prisma.user.findUnique({ where: { email } });
     if (userExists) {
-      return res.status(400).json({ error: 'El email ya está registrado' });
+      return res.status(400).json({ errors: ['El email ya está registrado'] });
     }
 
+    // Encriptar la contraseña
     const password_hash = await bcrypt.hash(password, 10);
 
+    // Crear usuario
     const newUser = await prisma.user.create({
       data: {
         nombre,
@@ -72,7 +83,8 @@ app.post('/api/auth/register', async (req, res) => {
       user: { id: newUser.id, nombre: newUser.nombre, email: newUser.email },
     });
   } catch (error) {
-    res.status(500).json({ error: 'Error interno del servidor' });
+    console.error('Error en registro:', error);
+    res.status(500).json({ errors: ['Error interno del servidor'] });
   }
 });
 
@@ -256,13 +268,11 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
       return res.status(400).json({ error: 'No puedes comprar tu propio producto' });
     }
 
-    // Determinar el estado inicial según la logística elegida
     const estado_envio =
       metodo_envio === 'DELIVERY'
         ? 'PENDIENTE_DE_ENVIO'
         : 'ACORDADO_PRESENCIAL';
 
-    // Transacción: crear la orden y marcar el producto como VENDIDO
     const [newOrder, updatedProduct] = await prisma.$transaction([
       prisma.order.create({
         data: {
@@ -296,13 +306,11 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
 io.on('connection', (socket) => {
   console.log('Cliente conectado a Socket.IO:', socket.id);
 
-  // Unirse a una sala específica de chat (conversation_id)
   socket.on('join_room', (conversation_id) => {
     socket.join(conversation_id);
     console.log(`Socket ${socket.id} se unió a la sala: ${conversation_id}`);
   });
 
-  // Escuchar y transmitir envío de mensaje
   socket.on('send_message', async (data) => {
     const { conversation_id, emisor_id, contenido } = data;
 
