@@ -33,7 +33,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-// Configuración de Multer para archivos en memoria
+// Configuración de Multer para recibir archivos en memoria
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
@@ -182,7 +182,7 @@ app.get('/api/products/:id', async (req, res) => {
 
 // --- 5. ENDPOINTS DE CONVERSACIONES Y MENSAJES ---
 
-// Obtener o crear conversación entre comprador y vendedor
+// Obtener o crear conversación
 app.post('/api/conversations', authenticateToken, async (req, res) => {
   try {
     const { producto_id, vendedor_id } = req.body;
@@ -230,7 +230,69 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
   }
 });
 
-// --- 6. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
+// --- 6. ENDPOINT DE CREACIÓN DE PEDIDOS Y GESTIÓN DE ENVÍO ---
+app.post('/api/orders', authenticateToken, async (req, res) => {
+  try {
+    const { producto_id, metodo_envio, direccion } = req.body;
+    const comprador_id = req.user.id;
+
+    if (!producto_id || !metodo_envio) {
+      return res.status(400).json({ error: 'Producto y método de envío son requeridos' });
+    }
+
+    const product = await prisma.product.findUnique({
+      where: { id: producto_id },
+    });
+
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    if (product.estado === 'VENDIDO') {
+      return res.status(400).json({ error: 'El producto ya ha sido vendido' });
+    }
+
+    if (product.user_id === comprador_id) {
+      return res.status(400).json({ error: 'No puedes comprar tu propio producto' });
+    }
+
+    // Determinar el estado inicial según la logística elegida
+    const estado_envio =
+      metodo_envio === 'DELIVERY'
+        ? 'PENDIENTE_DE_ENVIO'
+        : 'ACORDADO_PRESENCIAL';
+
+    // Transacción: crear la orden y marcar el producto como VENDIDO
+    const [newOrder, updatedProduct] = await prisma.$transaction([
+      prisma.order.create({
+        data: {
+          producto_id,
+          comprador_id,
+          vendedor_id: product.user_id,
+          metodo_envio,
+          estado_envio,
+          monto_total: product.precio,
+          direccion: metodo_envio === 'DELIVERY' ? direccion || 'Sin dirección provista' : null,
+        },
+      }),
+      prisma.product.update({
+        where: { id: producto_id },
+        data: { estado: 'VENDIDO' },
+      }),
+    ]);
+
+    res.status(201).json({
+      message: 'Compra procesada exitosamente',
+      order: newOrder,
+      product: updatedProduct,
+    });
+  } catch (error) {
+    console.error('Error al procesar la orden:', error);
+    res.status(500).json({ error: 'Error al procesar la compra' });
+  }
+});
+
+// --- 7. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
 io.on('connection', (socket) => {
   console.log('Cliente conectado a Socket.IO:', socket.id);
 
@@ -245,7 +307,6 @@ io.on('connection', (socket) => {
     const { conversation_id, emisor_id, contenido } = data;
 
     try {
-      // Guardar el mensaje en la base de datos con Prisma
       const savedMessage = await prisma.message.create({
         data: {
           conversation_id,
@@ -255,7 +316,6 @@ io.on('connection', (socket) => {
         include: { emisor: { select: { id: true, nombre: true } } },
       });
 
-      // Emitir a todos los sockets conectados en esa sala de chat
       io.to(conversation_id).emit('receive_message', savedMessage);
     } catch (error) {
       console.error('Error guardando o emitiendo mensaje:', error);
@@ -267,7 +327,7 @@ io.on('connection', (socket) => {
   });
 });
 
-// Arrancar el servidor usando `server.listen` en lugar de `app.listen`
+// Servidor escuchando peticiones HTTP y WebSockets
 server.listen(PORT, () => {
   console.log(`Servidor HTTP y WebSockets corriendo en http://localhost:${PORT}`);
 });

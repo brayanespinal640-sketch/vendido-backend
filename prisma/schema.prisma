@@ -18,6 +18,13 @@ enum EstadoProducto {
   VENDIDO
 }
 
+enum EstadoEnvio {
+  ACORDADO_PRESENCIAL
+  PENDIENTE_DE_ENVIO
+  EN_TRANSPORTE
+  ENTREGADO
+}
+
 model User {
   id            String   @id @default(uuid())
   nombre        String
@@ -31,6 +38,8 @@ model User {
   conversationsAsComprador Conversation[] @relation("CompradorConversations")
   conversationsAsVendedor  Conversation[] @relation("VendedorConversations")
   messages                 Message[]      @relation("EmisorMessages")
+  ordersAsComprador        Order[]        @relation("CompradorOrders")
+  ordersAsVendedor         Order[]        @relation("VendedorOrders")
 
   @@map("users")
 }
@@ -48,6 +57,7 @@ model Product {
 
   user          User           @relation(fields: [user_id], references: [id], onDelete: Cascade)
   conversations Conversation[]
+  orders        Order[]
 
   @@map("products")
 }
@@ -79,4 +89,22 @@ model Message {
   emisor       User         @relation("EmisorMessages", fields: [emisor_id], references: [id], onDelete: Cascade)
 
   @@map("messages")
+}
+
+model Order {
+  id           String      @id @default(uuid())
+  producto_id  String
+  comprador_id String
+  vendedor_id  String
+  metodo_envio TipoEntrega
+  estado_envio EstadoEnvio
+  monto_total  Float
+  direccion    String?
+  created_at   DateTime    @default(now())
+
+  producto  Product @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  comprador User    @relation("CompradorOrders", fields: [comprador_id], references: [id], onDelete: Cascade)
+  vendedor  User    @relation("VendedorOrders", fields: [vendedor_id], references: [id], onDelete: Cascade)
+
+  @@map("orders")
 }
