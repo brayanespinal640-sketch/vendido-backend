@@ -43,6 +43,10 @@ model User {
   ordersAsComprador        Order[]        @relation("CompradorOrders")
   ordersAsVendedor         Order[]        @relation("VendedorOrders")
 
+  // Relaciones para las reseñas
+  reviewsReceived Review[] @relation("VendedorReviews")
+  reviewsGiven    Review[] @relation("AutorReviews")
+
   @@map("users")
 }
 
@@ -71,9 +75,9 @@ model Conversation {
   producto_id  String
   created_at   DateTime @default(now())
 
-  comprador User      @relation("CompradorConversations", fields: [comprador_id], references: [id], onDelete: Cascade)
-  vendedor  User      @relation("VendedorConversations", fields: [vendedor_id], references: [id], onDelete: Cascade)
-  producto  Product   @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  comprador User    @relation("CompradorConversations", fields: [comprador_id], references: [id], onDelete: Cascade)
+  vendedor  User    @relation("VendedorConversations", fields: [vendedor_id], references: [id], onDelete: Cascade)
+  producto  Product @relation(fields: [producto_id], references: [id], onDelete: Cascade)
   messages  Message[]
 
   @@unique([comprador_id, vendedor_id, producto_id])
@@ -104,9 +108,23 @@ model Order {
   direccion    String?
   created_at   DateTime    @default(now())
 
-  producto Product @relation(fields: [producto_id], references: [id], onDelete: Cascade)
-  comprador User   @relation("CompradorOrders", fields: [comprador_id], references: [id], onDelete: Cascade)
-  vendedor  User   @relation("VendedorOrders", fields: [vendedor_id], references: [id], onDelete: Cascade)
+  producto  Product @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  comprador User    @relation("CompradorOrders", fields: [comprador_id], references: [id], onDelete: Cascade)
+  vendedor  User    @relation("VendedorOrders", fields: [vendedor_id], references: [id], onDelete: Cascade)
 
   @@map("orders")
+}
+
+model Review {
+  id          String   @id @default(uuid())
+  vendedor_id String
+  autor_id    String
+  calificacion Int     // De 1 a 5 estrellas
+  comentario  String
+  created_at  DateTime @default(now())
+
+  vendedor User @relation("VendedorReviews", fields: [vendedor_id], references: [id], onDelete: Cascade)
+  autor    User @relation("AutorReviews", fields: [autor_id], references: [id], onDelete: Cascade)
+
+  @@map("reviews")
 }

@@ -261,7 +261,86 @@ app.get('/api/user/products', authenticateToken, async (req, res) => {
   }
 });
 
-// --- 6. ENDPOINTS DE CONVERSACIONES Y MENSAJES ---
+// --- 6. ENDPOINTS DE PERFIL PÚBLICO Y RESEÑAS ---
+
+// Obtener perfil público, productos disponibles y reseñas de un usuario
+app.get('/api/users/:id/public', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        nombre: true,
+        foto_perfil: true,
+        descripcion: true,
+        created_at: true,
+        products: {
+          where: { estado: 'DISPONIBLE' },
+          orderBy: { created_at: 'desc' },
+        },
+        reviewsReceived: {
+          orderBy: { created_at: 'desc' },
+          include: {
+            autor: {
+              select: { id: true, nombre: true, foto_perfil: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Usuario no encontrado' });
+    }
+
+    res.json(user);
+  } catch (error) {
+    console.error('Error al obtener perfil público:', error);
+    res.status(500).json({ error: 'Error al consultar perfil del vendedor' });
+  }
+});
+
+// Dejar una reseña/calificación a un vendedor
+app.post('/api/users/:id/reviews', authenticateToken, async (req, res) => {
+  try {
+    const vendedor_id = req.params.id;
+    const autor_id = req.user.id;
+    const { calificacion, comentario } = req.body;
+
+    if (vendedor_id === autor_id) {
+      return res.status(400).json({ error: 'No puedes dejarte una reseña a ti mismo' });
+    }
+
+    if (!calificacion || calificacion < 1 || calificacion > 5) {
+      return res.status(400).json({ error: 'La calificación debe ser entre 1 y 5 estrellas' });
+    }
+
+    if (!comentario) {
+      return res.status(400).json({ error: 'El comentario es requerido' });
+    }
+
+    const newReview = await prisma.review.create({
+      data: {
+        vendedor_id,
+        autor_id,
+        calificacion: parseInt(calificacion),
+        comentario,
+      },
+      include: {
+        autor: { select: { id: true, nombre: true, foto_perfil: true } },
+      },
+    });
+
+    res.status(201).json({ message: 'Reseña publicada exitosamente', review: newReview });
+  } catch (error) {
+    console.error('Error al crear reseña:', error);
+    res.status(500).json({ error: 'Error al publicar la reseña' });
+  }
+});
+
+// --- 7. ENDPOINTS DE CONVERSACIONES Y MENSAJES ---
 
 // Obtener o crear conversación
 app.post('/api/conversations', authenticateToken, async (req, res) => {
@@ -311,7 +390,7 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
   }
 });
 
-// --- 7. ENDPOINT DE CREACIÓN DE PEDIDOS Y GESTIÓN DE ENVÍO ---
+// --- 8. ENDPOINT DE CREACIÓN DE PEDIDOS Y GESTIÓN DE ENVÍO ---
 app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const { producto_id, metodo_envio, direccion } = req.body;
@@ -371,7 +450,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
   }
 });
 
-// --- 8. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
+// --- 9. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
 io.on('connection', (socket) => {
   console.log('Cliente conectado a Socket.IO:', socket.id);
 
