@@ -20,6 +20,8 @@ enum EstadoProducto {
 
 enum EstadoEnvio {
   ACORDADO_PRESENCIAL
+  PENDIENTE_PAGO
+  SOLICITADO_A_DELIVERY
   PENDIENTE_DE_ENVIO
   EN_TRANSPORTE
   ENTREGADO
@@ -42,12 +44,24 @@ model User {
   messages                 Message[]      @relation("EmisorMessages")
   ordersAsComprador        Order[]        @relation("CompradorOrders")
   ordersAsVendedor         Order[]        @relation("VendedorOrders")
-
-  // Relaciones para las reseñas
-  reviewsReceived Review[] @relation("VendedorReviews")
-  reviewsGiven    Review[] @relation("AutorReviews")
+  reviewsReceived          Review[]       @relation("VendedorReviews")
+  reviewsGiven             Review[]       @relation("AutorReviews")
+  addresses                Address[]
 
   @@map("users")
+}
+
+model Address {
+  id         String   @id @default(uuid())
+  user_id    String
+  alias      String   // Ej: "Casa", "Trabajo"
+  direccion  String
+  ciudad     String   @default("Tegucigalpa")
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("addresses")
 }
 
 model Product {
@@ -116,12 +130,12 @@ model Order {
 }
 
 model Review {
-  id          String   @id @default(uuid())
-  vendedor_id String
-  autor_id    String
-  calificacion Int     // De 1 a 5 estrellas
-  comentario  String
-  created_at  DateTime @default(now())
+  id           String   @id @default(uuid())
+  vendedor_id  String
+  autor_id     String
+  calificacion Int      // De 1 a 5 estrellas
+  comentario   String
+  created_at   DateTime @default(now())
 
   vendedor User @relation("VendedorReviews", fields: [vendedor_id], references: [id], onDelete: Cascade)
   autor    User @relation("AutorReviews", fields: [autor_id], references: [id], onDelete: Cascade)
