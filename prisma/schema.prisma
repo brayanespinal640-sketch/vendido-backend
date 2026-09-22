@@ -31,6 +31,8 @@ model User {
   email         String   @unique
   password_hash String
   foto_perfil   String?
+  telefono      String?
+  descripcion   String?
   tipo_usuario  String   @default("cliente")
   created_at    DateTime @default(now())
 
@@ -102,9 +104,9 @@ model Order {
   direccion    String?
   created_at   DateTime    @default(now())
 
-  producto  Product @relation(fields: [producto_id], references: [id], onDelete: Cascade)
-  comprador User    @relation("CompradorOrders", fields: [comprador_id], references: [id], onDelete: Cascade)
-  vendedor  User    @relation("VendedorOrders", fields: [vendedor_id], references: [id], onDelete: Cascade)
+  producto Product @relation(fields: [producto_id], references: [id], onDelete: Cascade)
+  comprador User   @relation("CompradorOrders", fields: [comprador_id], references: [id], onDelete: Cascade)
+  vendedor  User   @relation("VendedorOrders", fields: [vendedor_id], references: [id], onDelete: Cascade)
 
   @@map("orders")
 }

@@ -192,7 +192,76 @@ app.get('/api/products/:id', async (req, res) => {
   }
 });
 
-// --- 5. ENDPOINTS DE CONVERSACIONES Y MENSAJES ---
+// --- 5. ENDPOINTS DE PERFIL Y MIS PRODUCTOS ---
+
+// Obtener datos actualizados del usuario autenticado
+app.get('/api/user/profile', authenticateToken, async (req, res) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        foto_perfil: true,
+        telefono: true,
+        descripcion: true,
+        tipo_usuario: true,
+      },
+    });
+
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al consultar perfil' });
+  }
+});
+
+// Actualizar perfil del usuario (nombre, foto, teléfono, descripción)
+app.put('/api/user/profile', authenticateToken, async (req, res) => {
+  try {
+    const { nombre, foto_perfil, telefono, descripcion } = req.body;
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        nombre,
+        foto_perfil,
+        telefono,
+        descripcion,
+      },
+      select: {
+        id: true,
+        nombre: true,
+        email: true,
+        foto_perfil: true,
+        telefono: true,
+        descripcion: true,
+        tipo_usuario: true,
+      },
+    });
+
+    res.json({ message: 'Perfil actualizado exitosamente', user: updatedUser });
+  } catch (error) {
+    res.status(500).json({ error: 'Error al actualizar perfil' });
+  }
+});
+
+// Obtener todos los productos publicados por el usuario en sesión
+app.get('/api/user/products', authenticateToken, async (req, res) => {
+  try {
+    const products = await prisma.product.findMany({
+      where: { user_id: req.user.id },
+      orderBy: { created_at: 'desc' },
+    });
+
+    res.json(products);
+  } catch (error) {
+    res.status(500).json({ error: 'Error al obtener tus productos' });
+  }
+});
+
+// --- 6. ENDPOINTS DE CONVERSACIONES Y MENSAJES ---
 
 // Obtener o crear conversación
 app.post('/api/conversations', authenticateToken, async (req, res) => {
@@ -242,7 +311,7 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
   }
 });
 
-// --- 6. ENDPOINT DE CREACIÓN DE PEDIDOS Y GESTIÓN DE ENVÍO ---
+// --- 7. ENDPOINT DE CREACIÓN DE PEDIDOS Y GESTIÓN DE ENVÍO ---
 app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
     const { producto_id, metodo_envio, direccion } = req.body;
@@ -302,7 +371,7 @@ app.post('/api/orders', authenticateToken, async (req, res) => {
   }
 });
 
-// --- 7. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
+// --- 8. EVENTOS DE SOCKET.IO EN TIEMPO REAL ---
 io.on('connection', (socket) => {
   console.log('Cliente conectado a Socket.IO:', socket.id);
 
