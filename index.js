@@ -9,8 +9,9 @@ const cloudinary = require('cloudinary').v2;
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
-// Importar Middleware de Autenticación
+// Importar Middlewares de Autenticación y Permisos
 const authenticateToken = require('./middleware/auth');
+const requireAdminOrLogistics = require('./middleware/admin');
 
 // Importar Esquemas de Validación con Zod
 const { registerSchema } = require('./schemas/auth.schema');
@@ -390,77 +391,38 @@ app.get('/api/conversations/:id/messages', authenticateToken, async (req, res) =
   }
 });
 
-// --- 8. DIRECCIONES Y CHECKOUT ---
-
-// 8.1 GET /api/user/addresses -> Obtener direcciones del usuario autenticado
-app.get('/api/user/addresses', authenticateToken, async (req, res) => {
+// --- 8. ENDPOINT DE CREACIÓN DE PEDIDOS Y GESTIÓN DE ENVÍO ---
+app.post('/api/orders', authenticateToken, async (req, res) => {
   try {
-    const addresses = await prisma.address.findMany({
-      where: { user_id: req.user.id },
-      orderBy: { created_at: 'desc' },
-    });
-    res.json(addresses);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al consultar direcciones' });
-  }
-});
-
-// 8.2 POST /api/user/addresses -> Guardar una nueva dirección
-app.post('/api/user/addresses', authenticateToken, async (req, res) => {
-  try {
-    const { alias, direccion, ciudad } = req.body;
-    if (!direccion) {
-      return res.status(400).json({ error: 'La dirección es obligatoria' });
-    }
-
-    const newAddress = await prisma.address.create({
-      data: {
-        user_id: req.user.id,
-        alias: alias || 'Casa',
-        direccion,
-        ciudad: ciudad || 'Tegucigalpa',
-      },
-    });
-
-    res.status(201).json(newAddress);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al guardar la dirección' });
-  }
-});
-
-// 8.3 POST /api/checkout -> Procesar orden de compra (Delivery o Presencial)
-app.post('/api/checkout', authenticateToken, async (req, res) => {
-  try {
-    const { producto_id, metodo_envio, direccion_id, nueva_direccion } = req.body;
+    const { producto_id, metodo_envio, direccion } = req.body;
     const comprador_id = req.user.id;
 
-    const product = await prisma.product.findUnique({ where: { id: producto_id } });
-    if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
-    if (product.estado === 'VENDIDO') return res.status(400).json({ error: 'El producto ya está vendido' });
-    if (product.user_id === comprador_id) return res.status(400).json({ error: 'No puedes comprar tu propio producto' });
-
-    let direccionTexto = null;
-
-    if (metodo_envio === 'DELIVERY') {
-      if (nueva_direccion) {
-        const createdAddr = await prisma.address.create({
-          data: {
-            user_id: comprador_id,
-            alias: 'Entrega',
-            direccion: nueva_direccion,
-          },
-        });
-        direccionTexto = createdAddr.direccion;
-      } else if (direccion_id) {
-        const addr = await prisma.address.findUnique({ where: { id: direccion_id } });
-        direccionTexto = addr ? `${addr.alias}: ${addr.direccion}` : null;
-      }
+    if (!producto_id || !metodo_envio) {
+      return res.status(400).json({ error: 'Producto y método de envío son requeridos' });
     }
 
-    const estado_envio = metodo_envio === 'DELIVERY' ? 'SOLICITADO_A_DELIVERY' : 'ACORDADO_PRESENCIAL';
+    const product = await prisma.product.findUnique({
+      where: { id: producto_id },
+    });
 
-    // Crear la orden y marcar producto como VENDIDO
-    const [order] = await prisma.$transaction([
+    if (!product) {
+      return res.status(404).json({ error: 'Producto no encontrado' });
+    }
+
+    if (product.estado === 'VENDIDO') {
+      return res.status(400).json({ error: 'El producto ya ha sido vendido' });
+    }
+
+    if (product.user_id === comprador_id) {
+      return res.status(400).json({ error: 'No puedes comprar tu propio producto' });
+    }
+
+    const estado_envio =
+      metodo_envio === 'DELIVERY'
+        ? 'PENDIENTE_DE_ENVIO'
+        : 'ACORDADO_PRESENCIAL';
+
+    const [newOrder, updatedProduct] = await prisma.$transaction([
       prisma.order.create({
         data: {
           producto_id,
@@ -469,7 +431,7 @@ app.post('/api/checkout', authenticateToken, async (req, res) => {
           metodo_envio,
           estado_envio,
           monto_total: product.precio,
-          direccion: direccionTexto,
+          direccion: metodo_envio === 'DELIVERY' ? direccion || 'Sin dirección provista' : null,
         },
       }),
       prisma.product.update({
@@ -478,10 +440,82 @@ app.post('/api/checkout', authenticateToken, async (req, res) => {
       }),
     ]);
 
-    res.status(201).json({ message: 'Orden generada exitosamente', order });
+    res.status(201).json({
+      message: 'Compra procesada exitosamente',
+      order: newOrder,
+      product: updatedProduct,
+    });
   } catch (error) {
-    console.error('Error en checkout:', error);
-    res.status(500).json({ error: 'Error al procesar el checkout' });
+    console.error('Error al procesar la orden:', error);
+    res.status(500).json({ error: 'Error al procesar la compra' });
+  }
+});
+
+// --- 10. ENDPOINTS PANEL DE LOGÍSTICA / ADMIN ---
+
+// 1. GET /api/admin/orders -> Listar todos los pedidos solicitados a Delivery
+app.get('/api/admin/orders', authenticateToken, requireAdminOrLogistics, async (req, res) => {
+  try {
+    const orders = await prisma.order.findMany({
+      where: {
+        metodo_envio: 'DELIVERY',
+      },
+      orderBy: { created_at: 'desc' },
+      include: {
+        producto: {
+          select: { id: true, titulo: true, precio: true, imagenes: true },
+        },
+        vendedor: {
+          select: { id: true, nombre: true, telefono: true, email: true },
+        },
+        comprador: {
+          select: { id: true, nombre: true, telefono: true, email: true },
+        },
+      },
+    });
+
+    res.json(orders);
+  } catch (error) {
+    console.error('Error al obtener pedidos de logística:', error);
+    res.status(500).json({ error: 'Error interno al consultar pedidos' });
+  }
+});
+
+// 2. PATCH /api/admin/orders/:id/status -> Cambiar estado de la entrega
+app.patch('/api/admin/orders/:id/status', authenticateToken, requireAdminOrLogistics, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nuevo_estado } = req.body;
+
+    const estadosValidos = [
+      'SOLICITADO_A_DELIVERY',
+      'POR_RECOGER',
+      'EN_BODEGA',
+      'EN_CAMINO',
+      'ENTREGADO',
+    ];
+
+    if (!estadosValidos.includes(nuevo_estado)) {
+      return res.status(400).json({ error: 'Estado de envío no válido' });
+    }
+
+    const updatedOrder = await prisma.order.update({
+      where: { id },
+      data: { estado_envio: nuevo_estado },
+      include: {
+        producto: true,
+        vendedor: { select: { nombre: true } },
+        comprador: { select: { nombre: true } },
+      },
+    });
+
+    res.json({
+      message: `Estado de orden actualizado a ${nuevo_estado}`,
+      order: updatedOrder,
+    });
+  } catch (error) {
+    console.error('Error al actualizar estado:', error);
+    res.status(500).json({ error: 'Error al cambiar estado de la entrega' });
   }
 });
 

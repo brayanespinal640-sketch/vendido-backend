@@ -7,6 +7,12 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum RolUsuario {
+  CLIENTE
+  LOGISTICA
+  ADMIN
+}
+
 enum TipoEntrega {
   DELIVERY
   PRESENCIAL
@@ -23,20 +29,22 @@ enum EstadoEnvio {
   PENDIENTE_PAGO
   SOLICITADO_A_DELIVERY
   PENDIENTE_DE_ENVIO
-  EN_TRANSPORTE
+  POR_RECOGER
+  EN_BODEGA
+  EN_CAMINO
   ENTREGADO
 }
 
 model User {
-  id            String   @id @default(uuid())
+  id            String     @id @default(uuid())
   nombre        String
-  email         String   @unique
+  email         String     @unique
   password_hash String
   foto_perfil   String?
   telefono      String?
   descripcion   String?
-  tipo_usuario  String   @default("cliente")
-  created_at    DateTime @default(now())
+  tipo_usuario  RolUsuario @default(CLIENTE)
+  created_at    DateTime   @default(now())
 
   products                 Product[]
   conversationsAsComprador Conversation[] @relation("CompradorConversations")
